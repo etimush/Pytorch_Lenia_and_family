@@ -5,7 +5,7 @@ def sobel_x(x):
     k_x = torch.tensor([[-1, 0, +1],
                             [-2, 0, +2],
                             [-1, 0, +1]],
-    dtype=torch.float16).tile((x.shape[1], 1, 1, 1)).cuda()
+    dtype=torch.float32, device = "cpu").tile((x.shape[1], 1, 1, 1))
     sx =torch.nn.functional.conv2d(x, k_x, groups= x.shape[1], stride=1, padding="same")
     return sx
 
@@ -13,7 +13,7 @@ def sobel_y(x):
     k_y = torch.tensor([[-1, -2, -1],
                             [0, 0, 0],
                             [+1, 2, +1]],
-    dtype=torch.float16).tile((x.shape[1], 1, 1, 1)).cuda()
+    dtype=torch.float32, device = "cpu").tile((x.shape[1], 1, 1, 1))
     sy =torch.nn.functional.conv2d(x, k_y, groups= x.shape[1], stride=1, padding="same")
     return sy
 
@@ -35,7 +35,7 @@ class Lenia(torch.nn.Module):
         self.n2 = 2
         self.theta_x = 1.0
         self.kpc = kpc
-        self.kernels = torch.nn.Conv2d(out_features,self.kpc*out_features,self.k,1,padding="same", padding_mode="circular", groups=out_features, bias=False, dtype=torch.float16)
+        self.kernels = torch.nn.Conv2d(out_features,self.kpc*out_features,self.k,1,padding="same", padding_mode="circular", groups=out_features, bias=False, dtype=torch.float32)
 
         self.heigts = torch.nn.Parameter(torch.rand((self.kpc*out_features,self.n))*self.rand[0],)
         self.radii = torch.nn.Parameter(torch.rand((self.kpc*out_features,self.n)))
@@ -44,9 +44,9 @@ class Lenia(torch.nn.Module):
                 self.radii.data[j,i] = ((1*i)/self.n)+0.1 + (self.k/2000)*self.rand[1]*2
 
         self.width = torch.nn.Parameter(torch.randn((self.kpc*out_features,self.n))*self.rand[2]/3)
-        self.mu_conv = torch.nn.Conv2d(self.kpc*out_features,self.kpc*out_features,1,1,padding="same", padding_mode="circular", groups=self.kpc*out_features, dtype=torch.float16)
-        self.sigma_conv = torch.nn.Conv2d(self.kpc*out_features,self.kpc*out_features,1,1,padding="same", padding_mode="circular", groups=self.kpc*out_features, bias=False, dtype=torch.float16)
-        self.weights = torch.nn.Conv2d(self.kpc*out_features,out_features,1,1,padding="same", bias=False,dtype=torch.float16)
+        self.mu_conv = torch.nn.Conv2d(self.kpc*out_features,self.kpc*out_features,1,1, groups=self.kpc*out_features, dtype=torch.float32)
+        self.sigma_conv = torch.nn.Conv2d(self.kpc*out_features,self.kpc*out_features,1,1, groups=self.kpc*out_features, bias=False, dtype=torch.float32)
+        self.weights = torch.nn.Conv2d(self.kpc*out_features,out_features,1,1, bias=False,dtype=torch.float32)
         self.grid = torch.tensor([])
         self.kernels = self.create_gaussian_bumps_kernel(self.n, self.heigts, self.radii, self.width, self.k,
                                                          self.kernels)
@@ -95,13 +95,14 @@ class Lenia(torch.nn.Module):
 
     def growth_func(self, u):
         #torch.max(torch.zeros_like(u), 1 - (u - mu[None,:,None,None]) ** 2 / (9 * sigma[None,:,None,None] ** 2)) ** 4 * 2 - 1
+
         return  (2*torch.exp(self.sigma_conv(-(self.mu_conv(u)) ** 2) ) -1)
 
     def kernel_pass(self, x):
         #u = self.k_inner(x)
-        sum_k = self.kernels.weight.data.sum(dim = (-1,-2)).squeeze()
+        sum_k = self.kernels.weight.data.sum(dim = (-1,-2)).swapaxes(0,1)
         u = self.kernels(x)
-        u = u / sum_k[:,None,None] if len(sum_k.shape) > 0 else sum_k
+        u = u / sum_k[:,:,None,None] if len(sum_k.shape) > 0 else sum_k
         return u
 
 

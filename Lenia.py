@@ -80,9 +80,9 @@ class Lenia(torch.nn.Module):
 
     def kernel_pass(self, x):
         #u = self.k_inner(x)
-        sum_k = self.kernels.weight.data.sum(dim = (-1,-2)).squeeze()
+        sum_k = self.kernels.weight.data.sum(dim = (-1,-2)).swapaxes(0,1)
         u = self.kernels(x)
-        u = u / sum_k[:,None,None] if len(sum_k.shape) > 0 else sum_k
+        u = u / sum_k[:,:,None,None] if len(sum_k.shape) > 0 else sum_k
         return u
 
 

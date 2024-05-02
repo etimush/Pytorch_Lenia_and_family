@@ -32,7 +32,7 @@ class App(threading.Thread):
         self.root.mainloop()
 
 torch.backends.cudnn.benchmark = True
-out_features, dt, k ,n , kpc = 3,1/2, 51,3,3
+out_features, dt, k ,n , kpc = 3,1/2, 51,3,1
 nca = Lenia(out_features,dt,k,n,kpc, device).to(device)
 #nca2 = Lenia(out_features,dt,k,n,kpc).eval().to(device).requires_grad_(False)
 full_screen_sim_x, full_screen_sim_y = 384, 216 #1920,1080
@@ -54,10 +54,10 @@ cv2.setWindowProperty("Lenia", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 rand_locs1 = torch.randint(0, 384, (1,100000))
 rand_locs2 = torch.randint(0, 216, (1,100000))
 rand_locs = torch.cat((rand_locs2,rand_locs1), dim=0)
-x= torch.zeros((1,out_features,full_screen_sim_y,full_screen_sim_x),dtype=torch.float16,device = device)
-random_inint = torch.rand((1,out_features,52,52),dtype=torch.float16)
+x= torch.zeros((1,out_features,full_screen_sim_y,full_screen_sim_x),dtype=torch.float32,device = device)
+random_inint = torch.rand((1,out_features,52,52),dtype=torch.float32)
 x[:,:,(x.shape[-2]//2) - (random_inint.shape[-2]//2):(x.shape[-2]//2) + (random_inint.shape[-2]//2),(x.shape[-1]//2) - (random_inint.shape[-1]//2):(x.shape[-1]//2) + (random_inint.shape[-1]//2)] = random_inint
-x2 = x.cpu().clone().permute((0, 2, 3, 1)).detach().numpy()
+
 app = App()
 v = True
 
@@ -68,6 +68,7 @@ v = True
 for i in range(10000):
     with torch.no_grad():
         x = nca(x)
+        print(x.shape)
         grid = x.cpu().clone().permute((0, 2, 3, 1)).detach().float().numpy()
 
     img = cv2.resize(grid[0, :, :, :], (1920, 1080), interpolation=cv2.INTER_AREA)
