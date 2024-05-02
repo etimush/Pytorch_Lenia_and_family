@@ -24,10 +24,11 @@ def sobel(x):
     return sxy
 
 class Lenia(torch.nn.Module):
-    def __init__(self, out_features, dt , k, n , kpc):
+    def __init__(self, out_features, dt , k, n , kpc, device):
         super(Lenia, self).__init__()
         self.rand = (torch.rand((3))*10)
         self.out = out_features
+        self.device = device
         self.dt = dt
         self.k = k
         self.n =n
@@ -119,7 +120,7 @@ class Lenia(torch.nn.Module):
 
 
             # Create a grid of coordinates
-            r = torch.arange(0, size, device="cuda:0") - (size - 1) / 2
+            r = torch.arange(0, size, device=self.device) - (size - 1) / 2
             x, y = torch.meshgrid(r, r)
 
             # Initialize the kernel
