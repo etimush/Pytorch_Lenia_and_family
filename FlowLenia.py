@@ -1,6 +1,25 @@
 import random
 import torch
 
+class ReintegrationTracker():
+    def __init__(self, X, Y, dt, sigma):
+        self.X = X
+        self.Y = Y
+        self.dt = dt
+        self. sigma = sigma
+        self.pos = self.construct_mesh_grid()
+
+    def construct_mesh_grid(self):
+        x,y = torch.arange(self.X), torch.arange(self.Y)
+        mx, my = torch.meshgrid(x,y)
+        pos = torch.cat((mx[:,:,None], my[:,:,None]), dim=2) +.5
+        return pos
+
+
+
+
+
+
 def sobel_x(x):
     k_x = torch.tensor([[-1, 0, +1],
                             [-2, 0, +2],
@@ -74,7 +93,7 @@ class Lenia(torch.nn.Module):
 
     def update(self, u):
         #self.grid = self.grid  + (self.dt*u)                # time step
-        self.grid = self.grid+u*self.dt
+        self.grid = self.grid+(u)*self.dt
         self.grid = torch.clip(self.grid, 0,1)
         return self.grid
 
