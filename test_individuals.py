@@ -1,81 +1,52 @@
-
-from tkinter import *
-#from Lenia import Lenia, Lenia3, Lenia2
-from FlowLenia import Lenia
+from FlowLenia import Lenia_Classic, Lenia_Diff, Lenia_Flow
 import cv2
 import torch
-import tkinter as tk
-import threading
-from evol_utils import mutate, reproduce
-import pyglet
+from utils import *
+import configs
+import uuid
 
 
-
-device = "cpu"
-
-
-
-
-class App(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-        self.start()
-    def callback(self):
-        self.root.quit()
-    def saveFile(self):
-        torch.save(nca.state_dict(), f"./supervised_saved/saved_model_15")
-    def run(self):
-        self.root = tk.Tk()
-        self.root.protocol("WM_DELETE_WINDOW", self.callback)
-        button = Button(text="save", command=self.saveFile)
-        button.pack()
-        self.root.mainloop()
-
-torch.backends.cudnn.benchmark = True
-out_features, dt, k ,n , kpc = 3,1/2, 51,3,1
-nca = Lenia(out_features,dt,k,n,kpc, device).to(device)
-#nca2 = Lenia(out_features,dt,k,n,kpc).eval().to(device).requires_grad_(False)
-full_screen_sim_x, full_screen_sim_y = 384, 216 #1920,1080
-phone_screen_sim_x, phone_screen_sim_y = 180,360  # 607, 1080
-#440
-#nca.load_state_dict(torch.load("evo_search_models/lenia29"))
-
-
-
-#evolutionary stuff##########################
-"""nca2.load_state_dict(torch.load("evo_models/Week_1_m4"))
-nca = reproduce(nca,nca2)
-nca = mutate(nca)"""
-############################################
-"""cv2.namedWindow("Lenia", cv2.WINDOW_NORMAL)
-cv2.setWindowProperty("Lenia", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)"""
+####Setup####
+device = "cuda:0"
 cv2.namedWindow("Lenia", cv2.WND_PROP_FULLSCREEN)
 cv2.setWindowProperty("Lenia", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-rand_locs1 = torch.randint(0, 384, (1,100000))
-rand_locs2 = torch.randint(0, 216, (1,100000))
-rand_locs = torch.cat((rand_locs2,rand_locs1), dim=0)
-x= torch.zeros((1,out_features,full_screen_sim_y,full_screen_sim_x),dtype=torch.float32,device = device)
-random_inint = torch.rand((1,out_features,52,52),dtype=torch.float32)
-x[:,:,(x.shape[-2]//2) - (random_inint.shape[-2]//2):(x.shape[-2]//2) + (random_inint.shape[-2]//2),(x.shape[-1]//2) - (random_inint.shape[-1]//2):(x.shape[-1]//2) + (random_inint.shape[-1]//2)] = random_inint
-
-app = App()
-v = True
+full_screen_sim_x, full_screen_sim_y = 480, 270  # 1920,1080
+config_type = None
+has_food = True
+s_uuid = str(uuid.uuid4())
+is_flow = True
+config = configs.load_saved_file(config_type)
 
 
+############
+
+###Set up Lenia#####
+
+C, dt, k, n,pk, has_food = get_setting(config, has_food)
+
+c0, c1,c2, n = cs_constructor(C, n, config, is_flow=is_flow, from_saved=config_type is not None)
+kernels = kernels_config_constructor_df(config, n, C)
+nca = Lenia_Flow(C, dt, k, kernels, device, full_screen_sim_x, full_screen_sim_y,has_food ,mode="soft").to(device)
+nca = adjust_params(nca, c0, c1,pk)
+x = get_starting_pattern(config, 40, C, full_screen_sim_x, full_screen_sim_y, has_food)
 
 
+###################
+app = App(kernels, dt, C, k, s_uuid, is_flow, c0, c1, nca.__class__.__name__, pk, has_food)  # need to save the c0 and c1 config
 
-for i in range(10000):
+#### Display Info#####
+"""kernels = nca.Ks[0].squeeze().cpu().clone().detach().float().numpy()[ full_screen_sim_y//2 - k: full_screen_sim_y//2 +k, full_screen_sim_x//2 - k : full_screen_sim_x//2 + k]
+cv2.imshow("k", kernels)
+cv2.waitKey(0)"""
+####################
+
+#### Simulation ####
+for i in range(1000000):
+    print(i)
     with torch.no_grad():
         x = nca(x)
-        print(x.shape)
-        grid = x.cpu().clone().permute((0, 2, 3, 1)).detach().float().numpy()
-
-    img = cv2.resize(grid[0, :, :, :], (1920, 1080), interpolation=cv2.INTER_AREA)
-    cv2.waitKey(1)
-    cv2.imshow("Lenia", img)
-
-
-
-for key in nca.state_dict():
-    print(key, nca.state_dict()[key])
+        grid = x.cpu().clone().permute((1, 0, 2)).detach().float().numpy()
+    """if i != 0 and i% 500 == 0:
+        nf = get_food_pos(full_screen_sim_x,full_screen_sim_y,100, 2)
+        x[:,:,0:1] += nf"""
+    render(grid, has_food)

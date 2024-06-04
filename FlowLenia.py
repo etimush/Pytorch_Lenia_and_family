@@ -1,19 +1,129 @@
 import random
 import torch
+import numpy as np
+
+
+
+class Lenia_Classic(torch.nn.Module):
+    def __init__(self, C, dt , K , kernels, device, X, Y, mode = "soft"):
+        super(Lenia_Classic, self).__init__()
+
+        self.dt = dt
+        self.C = C
+        self.kernels = kernels
+        self.device = device
+        self.midX = X//2
+        self.midY = Y//2
+        self.bell = lambda x, m, s: torch.exp(-((x - m) / s) ** 2 / 2)
+        self.mode = mode
+        Ds = [torch.tensor(np.linalg.norm(np.asarray(np.ogrid[-self.midX:self.midX, -self.midY:self.midY], dtype=object)) / K*len(k["b"])/k["r"], device=device, dtype=torch.float32) for k in self.kernels]
+        self.Ks = [(D<len(k["b"])) *  torch.tensor(k["b"],device=device)[torch.minimum(D.int(),torch.tensor(len(k["b"]))-1)] * self.bell(D % 1, 0.5, 0.15) for D,k in zip(Ds,self.kernels)]
+        self.fkernels = [torch.fft.fft2(torch.fft.fftshift(k/k.sum())) for k in self.Ks]
+
+    def growth(self,U,m,s):
+        return self.bell(U,m,s)*2 -1
+
+    def soft_clip(self,x):
+        return 1 / (1 + torch.exp(-4 * (x - 0.5)))
+
+    def forward(self, x):
+        fXs = [torch.fft.fft2(x[:,:, i]) for i in range(x.shape[-1])]
+        Us = [torch.fft.ifft2(fkernel*fXs[k["c0"]]).real for fkernel, k in zip(self.fkernels, self.kernels)]
+        Gs = [self.growth(U,k["m"],k["s"]) for U,k in zip(Us,self.kernels)]
+        Hs = torch.dstack([sum(k["h"]*G if k["c1"] == c1 else torch.zeros_like(G, device=self.device) for G,k in zip(Gs, self.kernels)  ) for c1 in range(self.C)])
+        if self.mode == "soft":
+            x = self.soft_clip(x + self.dt*Hs)
+        if self.mode =="hard":
+            x = torch.clip(x + self.dt*Hs, 0, 1)
+        return x
+
+
+class Lenia_Diff(torch.nn.Module):
+    def __init__(self, C, dt , K, kernels, device, X, Y, mode = "soft"):
+        super(Lenia_Diff, self).__init__()
+
+        self.dt = dt
+        self.C = C
+        self.kernels = kernels
+        self.device = device
+        self.midX = X//2
+        self.midY = Y//2
+        self.bell = lambda x, m, s: torch.exp(-((x - m) / s) ** 2 / 2)
+        self.bell_kernel = lambda x, a, w, r, R: torch.exp(-((x / (r * R)) - a) ** 2 / (2*w**2))
+        self.mode = mode
+        Ds = [torch.tensor(np.linalg.norm(np.asarray(np.ogrid[-self.midX:self.midX, -self.midY:self.midY], dtype=object)) / K*len(k["b"])/k["r"], device=device, dtype=torch.float32) for k in self.kernels]
+        self.Ks = [(D<len(k["b"])) *  torch.tensor(k["b"],device=device)[torch.minimum(D.int(),torch.tensor(len(k["b"]))-1)] * self.bell_kernel(D % 1, torch.tensor(k["a"],device=device)[torch.minimum(D.int(),torch.tensor(len(k["a"]))-1)], torch.tensor(k["w"],device=device)[torch.minimum(D.int(),torch.tensor(len(k["w"]))-1)],k["r"],K) for D,k in zip(Ds,self.kernels)]
+        self.fkernels = [torch.fft.fft2(torch.fft.fftshift(k/k.sum())) for k in self.Ks]
+
+    def growth(self,U,m,s):
+        return self.bell(U,m,s)*2 -1
+
+    def soft_clip(self,x):
+        return 1 / (1 + torch.exp(-4 * (x - 0.5)))
+
+    def forward(self, x):
+        fXs = [torch.fft.fft2(x[:,:,i]) for i in range(x.shape[-1])]
+        Us = [torch.fft.ifft2(fkernel*fXs[k["c0"]]).real for fkernel, k in zip(self.fkernels, self.kernels)]
+        Gs = [self.growth(U,k["m"],k["s"]) for U,k in zip(Us,self.kernels)]
+        Hs = torch.dstack([sum(k["h"]*G if k["c1"] == c1 else torch.zeros_like(G, device=self.device) for G,k in zip(Gs, self.kernels)  ) for c1 in range(self.C)])
+        if self.mode == "soft":
+            x = self.soft_clip(x + self.dt*Hs)
+        if self.mode =="hard":
+            x = torch.clip(x + self.dt*Hs, 0, 1)
+        return x
+
+def construct_mesh_grid(X,Y):
+    x, y = torch.arange(X), torch.arange(Y)
+    mx, my = torch.meshgrid(x, y)
+    pos = torch.dstack((mx, my)) + .5
+    #pos = pos.permute((2,1,0))
+    return pos.to("cuda:0")
+
+def construct_ds(dd):
+    dxs = []
+    dys = []
+    for dx in range(-dd, dd+1):
+        for dy in range(-dd, dd+1):
+            dxs.append(dx)
+            dys.append(dy)
+    dxs = torch.tensor(dxs, device="cuda:0")
+    dys = torch.tensor(dys, device="cuda:0")
+    return dxs, dys
 
 class ReintegrationTracker():
-    def __init__(self, X, Y, dt, sigma):
+    def __init__(self, X, Y, dt,dd=5, sigma=0.85):
         self.X = X
         self.Y = Y
+        self.dd = dd
         self.dt = dt
-        self. sigma = sigma
-        self.pos = self.construct_mesh_grid()
+        self.sigma = sigma
+        self.pos = construct_mesh_grid(X,Y)
+        self.dxs, self.dys = construct_ds(dd)
 
-    def construct_mesh_grid(self):
-        x,y = torch.arange(self.X), torch.arange(self.Y)
-        mx, my = torch.meshgrid(x,y)
-        pos = torch.cat((mx[:,:,None], my[:,:,None]), dim=2) +.5
-        return pos
+
+    def step(self, grid, mu, dx, dy):
+
+        gridR = torch.roll(grid, (dx,dy), (0,1))
+        muR = torch.roll(mu, (dx,dy), (0,1))
+        #dpmu = (torch.stack([torch.abs(self.pos[...,None] - (muR + torch.tensor([di, dj],device="cuda:0")[None,None,:,None])) for di in (-self.X,0, self.X) for dj in (-self.Y,0, self.Y) ])).min(dim=0)[0]
+        #dpmu = (torch.stack([torch.abs(self.pos[...,None] - (muR + torch.tensor([di, dj],device="cuda:0")[None,None,:,None])) for di in (-self.X,0, self.X) for dj in (-self.Y,0, self.Y) ])).min(dim=0)[0]
+        dpmu = (self.pos[...,None]-muR).abs()
+        sz = (.5 - dpmu + self.sigma)
+        area = torch.prod(torch.clip(sz,0,min(1,2*self.sigma)), dim= 2) / (4*self.sigma**2)
+        ngrid = gridR * area
+
+        return ngrid
+    def apply(self, grid, F):
+
+        ma = self.dd - self.sigma
+        mu = self.pos[..., None] + (self.dt*F).clip(-ma,ma)
+        mu = torch.clip(mu, self.sigma, self.X - self.sigma)
+        ngrid = torch.stack([self.step(grid, mu, dx, dy) for dx, dy in zip(self.dxs, self.dys)])
+
+
+
+        return ngrid.sum(dim=0)
+
 
 
 
@@ -21,144 +131,236 @@ class ReintegrationTracker():
 
 
 def sobel_x(x):
-    k_x = torch.tensor([[-1, 0, +1],
-                            [-2, 0, +2],
-                            [-1, 0, +1]],
-    dtype=torch.float32, device = "cpu").tile((x.shape[1], 1, 1, 1))
-    sx =torch.nn.functional.conv2d(x, k_x, groups= x.shape[1], stride=1, padding="same")
-    return sx
+
+    k_x = (torch.tensor([[-1, 0, 1],
+                            [-2, 0, 2],
+                            [-1, 0, 1]],
+    dtype=torch.float32, device = "cuda:0")
+           .tile((1, 1, 1,1)))
+
+    sx =torch.vstack([torch.nn.functional.conv2d(x[None,:,:,c], k_x, groups= 1, stride=1, padding="same") for c in range(x.shape[-1])])
+    return sx.permute((1,2,0))
 
 def sobel_y(x):
-    k_y = torch.tensor([[-1, -2, -1],
-                            [0, 0, 0],
-                            [+1, 2, +1]],
-    dtype=torch.float32, device = "cpu").tile((x.shape[1], 1, 1, 1))
-    sy =torch.nn.functional.conv2d(x, k_y, groups= x.shape[1], stride=1, padding="same")
-    return sy
+    k_y = torch.tensor([[-1, 0, 1],
+                        [-2, 0, 2],
+                        [-1, 0, 1]],
+                       dtype=torch.float32, device="cuda:0").T.tile((1, 1, 1, 1))
+    sy =torch.vstack([torch.nn.functional.conv2d(x[None,:,:,c], k_y, groups= 1, stride=1, padding="same") for c in range(x.shape[-1])])
+    return sy.permute((1,2,0))
 
 def sobel(x):
     sx = sobel_x(x)
     sy = sobel_y(x)
-    sxy = torch.cat((sx[:,:,None,:,:], sy[:,:,None,:,:]), dim= 2)
+    sxy = torch.cat((sy[:,:,None,:], sx[:,:,None,:]), dim= 2)
     return sxy
 
-class Lenia(torch.nn.Module):
-    def __init__(self, out_features, dt , k, n , kpc, device):
-        super(Lenia, self).__init__()
-        self.rand = (torch.rand((3))*10)
-        self.out = out_features
-        self.device = device
+class Lenia_Flow(torch.nn.Module):
+    def __init__(self, C, dt , K , kernels, device, X, Y, has_food,mode = "soft"):
+        super(Lenia_Flow, self).__init__()
+        self.rt = ReintegrationTracker(X,Y,dt)
+        self.has_food = has_food
         self.dt = dt
-        self.k = k
-        self.n =n
-        self.n2 = 2
-        self.theta_x = 1.0
-        self.kpc = kpc
-        self.kernels = torch.nn.Conv2d(out_features,self.kpc*out_features,self.k,1,padding="same", padding_mode="circular", groups=out_features, bias=False, dtype=torch.float32)
-
-        self.heigts = torch.nn.Parameter(torch.rand((self.kpc*out_features,self.n))*self.rand[0],)
-        self.radii = torch.nn.Parameter(torch.rand((self.kpc*out_features,self.n)))
-        for j in range(self.kpc*out_features):
-            for i in range(self.n):
-                self.radii.data[j,i] = ((1*i)/self.n)+0.1 + (self.k/2000)*self.rand[1]*2
-
-        self.width = torch.nn.Parameter(torch.randn((self.kpc*out_features,self.n))*self.rand[2]/3)
-        self.mu_conv = torch.nn.Conv2d(self.kpc*out_features,self.kpc*out_features,1,1, groups=self.kpc*out_features, dtype=torch.float32)
-        self.sigma_conv = torch.nn.Conv2d(self.kpc*out_features,self.kpc*out_features,1,1, groups=self.kpc*out_features, bias=False, dtype=torch.float32)
-        self.weights = torch.nn.Conv2d(self.kpc*out_features,out_features,1,1, bias=False,dtype=torch.float32)
-        self.grid = torch.tensor([])
-        self.kernels = self.create_gaussian_bumps_kernel(self.n, self.heigts, self.radii, self.width, self.k,
-                                                         self.kernels)
-
-        self.normalise_kernels()
+        self.C = C
+        self.n = 2.
+        self.theta_x = 2
+        self.kernels = kernels
+        self.device = device
+        self.midX = X//2
+        self.midY = Y//2
+        self.bell = lambda x, m, s: torch.exp(-((x - m) / s) ** 2 / 2)
+        self.bell_kernel = lambda x, a, w, b: (b* torch.exp(-(x[..., None]  - a) ** 2 / w)).sum(-1)
+        self.mode = mode
+        self.c0 = None
+        self.c1  =None
+        self.m = None
+        self.s =  None
+        self.h = None
+        self.pk = None
+        self.fkernels = self.construct_kernels(K,device)
 
 
+
+    def construct_kernels(self, K, device):
+        if self.pk == "sparse":
+            Ds = [torch.tensor(
+                np.linalg.norm(np.mgrid[-self.midX:self.midX, -self.midY:self.midY], axis=0) / K*len(k["b"])/k["r"],
+                device=self.device, dtype=torch.float32) for k in self.kernels]
+        else:
+            Ds = [torch.tensor(
+                np.linalg.norm(np.mgrid[-self.midX:self.midX, -self.midY:self.midY], axis=0) / ((K+15)*k["r"]),
+                device=self.device, dtype=torch.float32) for k in self.kernels]
+
+        Ks = torch.dstack([self.sigmoid(-(D - 1) * 10) * self.bell_kernel(D, torch.tensor(k["a"], device=device),
+                                                                              torch.tensor(k["w"], device=device),
+                                                                              torch.tensor(k["b"], device=device)) for
+                               D, k in zip(Ds, self.kernels)])
+        fkernels = torch.fft.fft2(torch.fft.fftshift(Ks / Ks.sum(dim=(0, 1), keepdims=True), dim=(0, 1)),
+                                       dim=(0, 1))
+        return fkernels
+    def growth(self,U,m,s):
+        return self.bell(U,m,s)*2 -1
+
+    def soft_clip(self,x):
+        return 1 / (1 + torch.exp(-4 * (x - 0.5)))
+
+    def sigmoid(self,x):
+        return 0.5 * (torch.tanh(x / 2) + 1)
 
     def forward(self, x):
-        ## Normal Lenia
-        self.grid = x
-        u = self.kernel_pass(x)
-        u = self.growth_func(u)  # growth functionm from results of kernel convolution
-        u = self.weighted_update(u)
-        ## Flow Part
-        grad_u = sobel(u) #(1,c,2,x,y)
-        grad_x = sobel(x.sum(dim=1, keepdims=True))# (1,1,2,x,y)
-        alpha = ((x[:,:,None,:,:]/self.theta_x)**self.n2).clip(0.0,1.0)
-        F = grad_u *(1-alpha)  - grad_x * alpha
-        
+        if self.has_food:
+            food = x[:,:,0:1]
+            x = x[:,:,1:]
+
+        fXs = torch.fft.fft2(x, dim= (0,1))
+
+        if self.c1 != None:
+            fXk = fXs[ :, :, self.c0]
+        else:
+            fXk = torch.dstack([fXs[:, :, k["c0"]] for k in self.kernels])
+
+        Us = torch.fft.ifft2(self.fkernels*fXk, dim=(0,1)).real
+        Gs = self.growth(Us,self.m,self.s) *self.h
+        if self.c1 != None:
+            Hs = torch.dstack([ Gs[:, :, self.c1[c]].sum(dim=-1) for c in range(self.C) ])
+        else:
+            Hs = torch.dstack([sum(k["h"] * Gs[:,:,i] if k["c1"] == c1 else torch.zeros_like(Gs[:,:,i], device=self.device) for i, k in zip(range(Gs.shape[-1]), self.kernels)) for c1 in range(self.C)])
 
 
-        x = self.update(u)
+        grad_u = sobel(Hs)  # (c,2,y,x)
+
+        grad_x = sobel(x.sum(dim=-1, keepdims=True))   # (1,2,y,x)
+
+        alpha = (((x[:,:,None, :] / self.theta_x) ** self.n)).clip(0,1)
+
+        F = grad_u * (1 - alpha) - grad_x * alpha
+        if self.has_food:
+            x_overlap = ((x[:,:,-1][...,None]-0.1 )* .99).clip(torch.zeros_like(food), food)
+            food = food - x_overlap
+            x = self.rt.apply(x, F)+ torch.cat([x_overlap/self.C for _ in range(self.C)], dim=-1) - (x*.0005)/self.C
+            x = torch.cat((food, x), dim= -1)
+        else :
+            x = self.rt.apply(x, F)
+
         return x
 
-    def update(self, u):
-        #self.grid = self.grid  + (self.dt*u)                # time step
-        self.grid = self.grid+(u)*self.dt
-        self.grid = torch.clip(self.grid, 0,1)
-        return self.grid
 
-    def normalise_kernels(self):
-        #for i in range(self.k_inner.weight.shape[0]):
-            #self.k_inner.weight.data[i] = self.k_inner.weight.data[i].sub_(torch.min(self.k_inner.weight.data[i])).div_(torch.max(self.k_inner.weight.data[i]) - torch.min(self.k_inner.weight.data[i]))
-        for i in range(self.weights.weight.data.shape[0]):
-
-
-            self.weights.weight.data[i] = self.weights.weight.data[i].sub_(torch.min(self.weights.weight.data[i]))
-            self.weights.weight.data[i] = self.weights.weight.data[i].div_(self.weights.weight.data[i].sum())
-        self.mu_conv.weight.data[:] = 1
-        self.mu_conv.bias.data[:] = - torch.rand(self.kpc*self.out)/3
-
-        self.sigma_conv.weight.data[:] = 1/(2 * ((torch.rand(self.kpc*self.out)/10)[:,None,None,None] ** 2))
-
-
-
-    def growth_func(self, u):
-        #torch.max(torch.zeros_like(u), 1 - (u - mu[None,:,None,None]) ** 2 / (9 * sigma[None,:,None,None] ** 2)) ** 4 * 2 - 1
-
-        return  (2*torch.exp(self.sigma_conv(-(self.mu_conv(u)) ** 2) ) -1)
-
-    def kernel_pass(self, x):
-        #u = self.k_inner(x)
-        sum_k = self.kernels.weight.data.sum(dim = (-1,-2)).swapaxes(0,1)
-        u = self.kernels(x)
-        u = u / sum_k[:,:,None,None] if len(sum_k.shape) > 0 else sum_k
-        return u
-
-
-    def weighted_update(self,g):
-        g = self.weights(g)
-        g = g / self.weights.weight.data.sum(dim =1)
-        return g
+class Lenia_Flow_Param(torch.nn.Module):
+    def __init__(self, C, dt , K , kernels, device, X, Y, mode = "soft"):
+        super(Lenia_Flow_Param, self).__init__()
+        self.rt = ReintegrationTrackerParam(X,Y,dt)
+        self.dt = dt
+        self.C = C
+        self.n = 2.
+        self.theta_x = 2
+        self.kernels = kernels
+        self.device = device
+        self.midX = X//2
+        self.midY = Y//2
+        self.bell = lambda x, m, s: torch.exp(-((x - m) / s) ** 2 / 2)
+        self.bell_kernel = lambda x, a, w, b: (b* torch.exp(-(x[..., None]  - a) ** 2 / w)).sum(-1)
+        self.mode = mode
+        self.c0 = None
+        self.c1  =None
+        self.m = None
+        self.s =  None
+        self.h = None
+        self.pk = None
+        self.fkernels = self.construct_kernels(K,device)
 
 
 
-    def create_gaussian_bumps_kernel(self,k:int, height:torch.nn.Parameter, radii:torch.nn.Parameter, widths:torch.nn.Parameter, size:int, kernels:torch.nn.Conv2d):
+    def construct_kernels(self, K, device):
+        if self.pk == "sparse":
+            Ds = [torch.tensor(
+                np.linalg.norm(np.mgrid[-self.midX:self.midX, -self.midY:self.midY], axis=0) / K*len(k["b"])/k["r"],
+                device=self.device, dtype=torch.float32) for k in self.kernels]
+        else:
+            Ds = [torch.tensor(
+                np.linalg.norm(np.mgrid[-self.midX:self.midX, -self.midY:self.midY], axis=0) / ((K+15)*k["r"]),
+                device=self.device, dtype=torch.float32) for k in self.kernels]
 
-        if radii.shape[1] != k or widths.shape[1] != k:
-            raise ValueError("Number of radii and widths should be equal to k.")
-        for i in range(kernels.weight.data.shape[0]):
+        Ks = torch.dstack([self.sigmoid(-(D - 1) * 10) * self.bell_kernel(D, torch.tensor(k["a"], device=device),
+                                                                              torch.tensor(k["w"], device=device),
+                                                                              torch.tensor(k["b"], device=device)) for
+                               D, k in zip(Ds, self.kernels)])
+        fkernels = torch.fft.fft2(torch.fft.fftshift(Ks / Ks.sum(dim=(0, 1), keepdims=True), dim=(0, 1)),
+                                       dim=(0, 1))
+        return fkernels
+    def growth(self,U,m,s):
+        return self.bell(U,m,s)*2 -1
+
+    def soft_clip(self,x):
+        return 1 / (1 + torch.exp(-4 * (x - 0.5)))
+
+    def sigmoid(self,x):
+        return 0.5 * (torch.tanh(x / 2) + 1)
+
+    def forward(self, x):
+
+        fXs = torch.fft.fft2(x, dim= (0,1))
+        if self.c1 != None:
+            fXk = fXs[ :, :, self.c0]
+        else:
+            fXk = torch.dstack([fXs[:, :, k["c0"]] for k in self.kernels])
+        Us = torch.fft.ifft2(self.fkernels*fXk, dim=(0,1)).real
+        Gs = self.growth(Us,self.m,self.s) *self.h
+        if self.c1 != None:
+            Hs = torch.dstack([ Gs[:, :, self.c1[c]].sum(dim=-1) for c in range(self.C) ])
+        else:
+            Hs = torch.dstack([sum(k["h"] * Gs[:,:,i] if k["c1"] == c1 else torch.zeros_like(Gs[:,:,i], device=self.device) for i, k in zip(range(Gs.shape[-1]), self.kernels)) for c1 in range(self.C)])
 
 
-            # Create a grid of coordinates
-            r = torch.arange(0, size, device=self.device) - (size - 1) / 2
-            x, y = torch.meshgrid(r, r)
+        grad_u = sobel(Hs)  # (c,2,y,x)
 
-            # Initialize the kernel
-            kernel = torch.zeros_like(x)
+        grad_x = sobel(x.sum(dim=-1, keepdims=True))   # (1,2,y,x)
 
-            for j in range(k):
-                # Calculate the radial distance from the center
-                radial_distance = torch.sqrt(x ** 2 + y ** 2)
+        alpha = (((x[:,:,None, :] / self.theta_x) ** self.n)).clip(0,1)
 
-                # Calculate Gaussian values with circular symmetry
-                gaussian_kernel = height[i,j] * torch.exp(-(radial_distance - radii[i,j]*(size/2)) ** 2 / (2 * widths[i,j] ** 2))
+        F = grad_u * (1 - alpha) - grad_x * alpha
+        x = self.rt.apply(x, F)
 
-                # Accumulate the Gaussian bumps
-                kernel += gaussian_kernel
+        return x
 
-            # Normalize the kernel to make the sum equal to 1
-            kernel = (kernel-torch.min(kernel))/(torch.max(kernel)-torch.min(kernel))
-            #kernel/kernel.sum()
-            kernels.weight.data[i,:,:,:] = kernel
 
-        return kernels
+class ReintegrationTrackerParam():
+    def __init__(self, X, Y, dt,dd=5, sigma=0.65):
+
+        self.X = X
+        self.Y = Y
+        self.dd = dd
+        self.dt = dt
+        self.sigma = sigma
+        self.pos = construct_mesh_grid(X,Y)
+        self.dxs, self.dys = construct_ds(dd)
+
+    def step_flow(self, X, H, mu, dx, dy):
+        """Summary
+        """
+        Xr = torch.roll(X, (dx, dy), dims=(0, 1))
+        Hr = torch.roll(H, (dx, dy), dims=(0, 1))  # (x, y, k)
+        mur = torch.roll(mu, (dx, dy), dims=(0, 1))
+
+        if self.border == 'torus':
+            dpmu = torch.min(torch.stack(
+                [torch.absolute(self.pos[..., None] - (mur + torch.array([di, dj])[None, None, :, None]))
+                 for di in (-self.X, 0, self.X) for dj in (-self.Y, 0, self.Y)]
+            ), dim=0)
+        else:
+            dpmu = torch.absolute(self.pos[..., None] - mur)
+
+        sz = .5 - dpmu + self.sigma
+        area = torch.prod(torch.clip(sz, 0, min(1, 2 * self.sigma)), dim=2) / (4 * self.sigma ** 2)
+        nX = Xr * area
+        return nX, Hr
+    def apply(self, grid, H,F):
+
+        ma = self.dd - self.sigma
+        mu = self.pos[..., None] + (self.dt*F).clip(-ma,ma)
+        mu = torch.clip(mu, self.sigma, self.X - self.sigma)
+        ngrid = torch.stack([self.step_flow(grid, H,mu, dx, dy) for dx, dy in zip(self.dxs, self.dys)])
+
+
+
+        return ngrid.sum(dim=0)
+
