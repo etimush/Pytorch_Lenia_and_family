@@ -1,10 +1,7 @@
-import random
 import tkinter as tk
-import numpy as np
 import cv2
 import threading
 import pickle
-import torch
 from tkinter import *
 from FlowLenia import *
 SPACE_CLASSIC= {
@@ -22,7 +19,7 @@ SPACE_CLASSIC= {
 
 
 class App(threading.Thread):
-    def __init__(self, kernel, dt, C, R, i, is_flow, c0, c1, class_name, pk, hf):
+    def __init__(self, kernel, dt, C, R, i, is_flow, c0, c1, class_name, pk, hf, save_path):
         threading.Thread.__init__(self)
         self.dict = {}
         self.dict["C"] = C
@@ -38,13 +35,14 @@ class App(threading.Thread):
         self.c1 = c1
         self.class_name = class_name
         self.start()
+        self.save_path = save_path
     def callback(self):
         self.root.quit()
     def saveFile(self):
         if self. is_flow:
             self.dict["c0"] = self.c0
             self.dict["c1"] = self.c1
-        with open('./supervised_saved/'+ self.class_name+ '_' + self.i + '.pkl', 'wb') as f:
+        with open(self.save_path+ self.class_name+ '_' + self.i + '.pkl', 'wb') as f:
             pickle.dump(self.dict, f)
     def run(self):
         self.root = tk.Tk()
@@ -90,16 +88,16 @@ def kernels_config_constructor_df(kernel_config, n, C):
         ]
         return kernel_config
 
-def get_setting(setting_config, has_food):
+def get_setting(setting_config, has_food, has_food_range = [1,2,3,4], no_food_range = [1,2,3], dt_range = [4,10], kernel_range = [2,25], n_range = [3,15], pk_choice =["dense", "sparse"] ):
     if setting_config != None:
-        C, dt, k, n, pk, has_food = setting_config["C"], setting_config["dt"], setting_config["R"], len(setting_config["kernels"]), setting_config["pk"] if "pk" in setting_config else None, setting_config["hf"]
+        C, dt, k, n, pk, has_food = setting_config["C"], setting_config["dt"], setting_config["R"], len(setting_config["kernels"]), setting_config["pk"] if "pk" in setting_config else None, setting_config["hf"] if "hf" in setting_config else None
         return  C, dt, k, n, pk, has_food
     else:
-        C = random.choice([1,2,3,4]) if not has_food else random.choice([1,2,3])
-        dt = 1 / random.randint(5,10)
-        k = random.randint(2, 51)
-        n = random.randint(2,15)
-        pk = random.choice(["dense", "sparse"])
+        C = random.choice(has_food_range) if not has_food else random.choice(no_food_range)
+        dt = 1 / random.randint(min(dt_range),max(dt_range))
+        k = random.randint(min(kernel_range), max(kernel_range))
+        n = random.randint(min(n_range),max(n_range))
+        pk = random.choice(pk_choice)
         return C, dt, k, n, pk, has_food
 def get_starting_pattern(pattern_confing, starting_area, C, X, Y,has_food,num_food =1500,food_size = 2 ,device= "cuda:0"):
     if pattern_confing != None and pattern_confing["pattern"] != None:
@@ -121,16 +119,16 @@ def get_starting_pattern(pattern_confing, starting_area, C, X, Y,has_food,num_fo
             x = torch.cat((x_food, x), dim=-1)
         return x
 
-def cs_constructor(C, n, config, is_flow , from_saved):
+def cs_constructor(C, n, config, is_flow , from_saved, has_food= True, food_channel_only = False):
     if not is_flow :
         return None, None, n
     elif is_flow and from_saved:
         return config["c0"], config["c1"], len(config["kernels"])
 
-    c2 = []
-    for j in range(n):
-       c2.append(int((C/n)*j))
-    M = np.ones((C,C), dtype=int)*n
+    if has_food:
+        M = np.ones((C+1,C+1), dtype=int)*n
+    else:
+        M = np.ones((C , C ), dtype=int) * n
     C = M.shape[0]
     c0 = []
     c1 = [[] for _ in range(C)]
@@ -143,8 +141,17 @@ def cs_constructor(C, n, config, is_flow , from_saved):
                 c0 = c0 + [s] * n
                 c1[t] = c1[t] + list(range(i, i + n))
             i += n
-    print(c1)
-    return c0, c1,c2, int(M.sum())
+    if has_food:
+        c2 = c1.pop(0)
+        if food_channel_only:
+            for j in range(len(c2)):
+                c1[-1].append(c2[j])
+        else:
+            for j in range(len(c2)):
+                c1[int((len(c1)/len(c2))*j)].append(c2[j])
+
+
+    return c0, c1, int(M.sum())
 
 def adjust_params(nca, c0, c1,pk, device="cuda:0"):
     if nca.__class__ != Lenia_Flow:
@@ -192,4 +199,6 @@ def render(grid, with_food):
 
     img = cv2.resize(img, (1920, 1080), interpolation=cv2.INTER_AREA)
     cv2.imshow("Lenia", img)
-    cv2.waitKey(1)
+    cv2.waitKey(16)
+
+

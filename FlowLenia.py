@@ -1,11 +1,10 @@
-import random
 import torch
 import numpy as np
 
 
 
 class Lenia_Classic(torch.nn.Module):
-    def __init__(self, C, dt , K , kernels, device, X, Y, mode = "soft"):
+    def __init__(self, C, dt , K , kernels, device, X, Y, mode = "soft", has_food = None):
         super(Lenia_Classic, self).__init__()
 
         self.dt = dt
@@ -39,7 +38,7 @@ class Lenia_Classic(torch.nn.Module):
 
 
 class Lenia_Diff(torch.nn.Module):
-    def __init__(self, C, dt , K, kernels, device, X, Y, mode = "soft"):
+    def __init__(self, C, dt , K, kernels, device, X, Y, mode = "soft", has_food = None):
         super(Lenia_Diff, self).__init__()
 
         self.dt = dt
@@ -91,7 +90,7 @@ def construct_ds(dd):
     return dxs, dys
 
 class ReintegrationTracker():
-    def __init__(self, X, Y, dt,dd=5, sigma=0.85):
+    def __init__(self, X, Y, dt,dd=2, sigma=0.95):
         self.X = X
         self.Y = Y
         self.dd = dd
@@ -208,9 +207,7 @@ class Lenia_Flow(torch.nn.Module):
         return 0.5 * (torch.tanh(x / 2) + 1)
 
     def forward(self, x):
-        if self.has_food:
-            food = x[:,:,0:1]
-            x = x[:,:,1:]
+
 
         fXs = torch.fft.fft2(x, dim= (0,1))
 
@@ -221,23 +218,24 @@ class Lenia_Flow(torch.nn.Module):
 
         Us = torch.fft.ifft2(self.fkernels*fXk, dim=(0,1)).real
         Gs = self.growth(Us,self.m,self.s) *self.h
-        if self.c1 != None:
-            Hs = torch.dstack([ Gs[:, :, self.c1[c]].sum(dim=-1) for c in range(self.C) ])
+        if self.c1 != None :
+            Hs = torch.dstack([ Gs[:, :, self.c1[c]].sum(dim=-1) for c in range(self.C- self.has_food) ])
+
         else:
             Hs = torch.dstack([sum(k["h"] * Gs[:,:,i] if k["c1"] == c1 else torch.zeros_like(Gs[:,:,i], device=self.device) for i, k in zip(range(Gs.shape[-1]), self.kernels)) for c1 in range(self.C)])
 
 
         grad_u = sobel(Hs)  # (c,2,y,x)
 
-        grad_x = sobel(x.sum(dim=-1, keepdims=True))   # (1,2,y,x)
+        grad_x = sobel(x[:,:,self.has_food:].sum(dim=-1, keepdims=True))   # (1,2,y,x)
 
-        alpha = (((x[:,:,None, :] / self.theta_x) ** self.n)).clip(0,1)
+        alpha = (((x[:,:,None, self.has_food:] / self.theta_x) ** self.n)).clip(0,1)
 
         F = grad_u * (1 - alpha) - grad_x * alpha
         if self.has_food:
-            x_overlap = ((x[:,:,-1][...,None]-0.1 )* .99).clip(torch.zeros_like(food), food)
-            food = food - x_overlap
-            x = self.rt.apply(x, F)+ torch.cat([x_overlap/self.C for _ in range(self.C)], dim=-1) - (x*.0005)/self.C
+            x_overlap = ((x[:,:,-1][...,None]-0.1 )* .9).clip(torch.zeros_like(x[:,:,0:1]), x[:,:,0:1])
+            food= x[:,:,0:1] - x_overlap
+            x = self.rt.apply(x[:,:,self.has_food:], F)+ torch.cat([x_overlap/self.C for _ in range(self.C-1)], dim=-1) - (x[:,:,self.has_food:]*.0005)/(self.C-1)
             x = torch.cat((food, x), dim= -1)
         else :
             x = self.rt.apply(x, F)
