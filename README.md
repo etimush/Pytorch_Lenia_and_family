@@ -11,3 +11,8 @@
 - ```virtualenv venv``` to create your new environment (called 'venv' here)
 - ```source venv/bin/activate``` to enter the virtual environment
 - ```pip install -r requirements.txt```  to install the requirements in the current environment
+
+# Remarks
+
+- test_idnividual.py should be the only file you need to run.
+- you may need to create an additional directory for saving parameters 
