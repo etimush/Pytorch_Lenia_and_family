@@ -1,0 +1,3 @@
+# Dependencies needed: 
+- Pytorch Cuda
+- 
