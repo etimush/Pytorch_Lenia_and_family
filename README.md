@@ -1,9 +1,8 @@
 # Dependencies needed: 
-
--Python 3.11
--numpy==2.1.2
--opencv_python==4.10.0.84
--torch==2.4.0
+- Python 3.11
+- numpy==2.1.2
+- opencv_python==4.10.0.84
+- torch==2.4.0
 # Getting started: Installing packages and running virtual environment 
 
 - ```git clone <repo>```
