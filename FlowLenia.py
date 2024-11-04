@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+import utils
 
 
 class Lenia_Classic(torch.nn.Module):
@@ -41,9 +41,10 @@ class Lenia_Diff(torch.nn.Module):
     def __init__(self, C, dt , K, kernels, device, X, Y, mode = "soft", has_food = None):
         super(Lenia_Diff, self).__init__()
 
-        self.dt = dt
-        self.C = C
+        self.dt = torch.tensor(dt, device=device)
+        self.C = torch.tensor(C, device=device)
         self.kernels = kernels
+
         self.device = device
         self.midX = X//2
         self.midY = Y//2
@@ -60,6 +61,7 @@ class Lenia_Diff(torch.nn.Module):
     def soft_clip(self,x):
         return 1 / (1 + torch.exp(-4 * (x - 0.5)))
 
+    @torch.no_grad()
     def forward(self, x):
         fXs = [torch.fft.fft2(x[:,:,i]) for i in range(x.shape[-1])]
         Us = [torch.fft.ifft2(fkernel*fXs[k["c0"]]).real for fkernel, k in zip(self.fkernels, self.kernels)]
