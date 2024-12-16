@@ -11,10 +11,10 @@ from pyperlin import FractalPerlin2D
 
 SPACE_CLASSIC= {
                 "bn" : 3,
-                "b"  :{"high": 1., "low":0.01},
+                "b"  :{"high": 1., "low":-1.0},
                 "m"  :{"high": .7, "low":0},
                 "s"  :{"high": .2, "low":0},
-                "h"  :{"high": 1., "low":0.01},
+                "h"  :{"high": 1., "low":-1},
                 "r"  :{"high": 1., "low":0.01},
                 "w"  :{"high": 1, "low":0.01},
                 "a"  :{"high": 1., "low":0.01}
@@ -193,10 +193,9 @@ def cs_constructor(C, n, config, is_flow , from_saved, has_food= True, food_chan
     return c0, c1, int(M.sum())
 
 def adjust_params(nca, c0, c1,pk, device="cuda:0"):
-    if nca.__class__ != Lenia_Flow:
-        return nca
 
-    if nca.__class__ == Lenia_Flow:
+
+    if (nca.__class__ == Lenia_Flow) or (nca.__class__ == Lenia_Diff_MassConserve):
         nca.c0 = c0
         nca.c1 = c1
         nca.h = torch.stack([torch.tensor(k["h"], device=device)for k in nca.kernels], dim = 0)
@@ -204,6 +203,7 @@ def adjust_params(nca, c0, c1,pk, device="cuda:0"):
         nca.m = torch.stack([torch.tensor(k["m"], device=device)for k in nca.kernels], dim = 0)
         nca.pk = pk
         return nca
+    else: return nca
 
 def get_food_pos(X, Y, num_spots =100, food_size = 5):
     places = [[random.randint(food_size, X-food_size), random.randint(food_size, Y-food_size)] for _ in range(num_spots)]
@@ -238,7 +238,8 @@ def render(grid, with_food, waitkey =1, multiplier = 1):
 
     img = cv2.resize(img, (img.shape[0]*multiplier,img.shape[1]*multiplier), interpolation=cv2.INTER_AREA)
     cv2.imshow("Lenia", img)
-    cv2.waitKey(waitkey)
+    key = cv2.waitKey(waitkey)
+    return key
 
 
 def mix(alpha, ca_sub, ca_over, keys):
@@ -304,7 +305,7 @@ def perlin(shape:tuple, wavelengths:tuple, black_prop:float=0.3,device='cuda:0')
 
     return torch.clamp((fp+(0.5-black_prop)*2)/(2*(1.-black_prop)),0,1)
 
-def construct_ca(s_uuid, save_path,full_screen_sim_x, full_screen_sim_y, mode, dict, ca_type, keys= ["m", "s", "w", "a", "b", "h"], has_food = False, is_flow = False, device = "cuda:0", vary = False, starting_area = 100, full_noise = True, has_food_range = [1,2,3,4], no_food_range = [3], dt_range = [10], kernel_range = [31], n_range = [9], pk_choice =["sparse"], bias = 0 ):
+def construct_ca(s_uuid, save_path,full_screen_sim_x, full_screen_sim_y, mode, dict, ca_type, keys= ["m", "s", "w", "a", "b", "h"], has_food = False, is_flow = False, device = "cuda:0", vary = False, starting_area = 100, full_noise = True, has_food_range = [1,2,3,4], no_food_range = [3], dt_range = [10], kernel_range = [31], n_range = [15], pk_choice =["sparse"], bias = 0 ):
     if vary:
         random_config = rand_search(dict, keys, bias)
     else:

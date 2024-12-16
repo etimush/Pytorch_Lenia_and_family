@@ -17,11 +17,11 @@ full = True
 s_uuid = "sub"
 base_path = "./base/Lenia_Diff_prior.pkl"
 save_path = "./mixing_save/"
-n_steps = 500
+n_steps = 1000
 base_config = configs.load_saved_file(None)
 found_sub = False
 found_over = False
-thresh = 0.0048311111119
+thresh = 0.034
 print(base_config)
 i = 0
 while not (found_over and found_sub):

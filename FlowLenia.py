@@ -151,8 +151,8 @@ def sobel_y(x):
     return sy.permute((1,2,0))
 
 def sobel(x):
-    sx = sobel_x(x)
-    sy = sobel_y(x)
+    sx = sobel_x(x.to(torch.float32))
+    sy = sobel_y(x.to(torch.float32))
     sxy = torch.cat((sy[:,:,None,:], sx[:,:,None,:]), dim= 2)
     return sxy
 
@@ -364,3 +364,133 @@ class ReintegrationTrackerParam():
 
         return ngrid.sum(dim=0)
 
+
+
+def conv_ones(x):
+    k_y = torch.tensor([[1, 1, 1],
+                        [1, 1, 1],
+                        [1, 1, 1]],
+                       dtype=torch.float32, device="cuda:0").T.tile((1, 1, 1, 1))
+    sy =torch.vstack([torch.nn.functional.conv2d(x[None,:,:,c], k_y, groups= 1, stride=1, padding="same") for c in range(x.shape[-1])])
+    return sy.permute((1,2,0))
+
+
+class Lenia_Diff_MassConserve(torch.nn.Module):
+    def __init__(self, C, dt, K, kernels, device, X, Y, mode="soft", has_food=None):
+        super(Lenia_Diff_MassConserve, self).__init__()
+
+        self.has_food = has_food
+        self.dt = dt
+        self.C = C
+        self.n = 2.
+        self.theta_x = 2
+        self.kernels = kernels
+        self.device = device
+        self.midX = X // 2
+        self.midY = Y // 2
+        self.bell = lambda x, m, s: torch.exp(-((x - m) / s) ** 2 / 2)
+        self.bell_kernel = lambda x, a, w, b: (b * torch.exp(-(x[..., None] - a) ** 2 / w)).sum(-1)
+        self.mode = mode
+        self.c0 = None
+        self.c1 = None
+        self.m = None
+        self.s = None
+        self.h = None
+        self.pk = None
+        self.fkernels = self.construct_kernels(K, device)
+
+    def growth(self, U, m, s):
+        return self.bell(U, m, s) * 2 - 1
+
+    def soft_clip(self, x):
+        return 1 / (1 + torch.exp(-4 * (x - 0.5)))
+
+
+
+    def sigmoid(self,x):
+        return 0.5 * (torch.tanh(x / 2) + 1)
+
+    @torch.no_grad()
+    def forward(self, x):
+
+        fXs = torch.fft.fft2(x, dim=(0, 1))
+        if self.c1 != None:
+            fXk = fXs[:, :, self.c0]
+        else:
+            fXk = torch.dstack([fXs[:, :, k["c0"]] for k in self.kernels])
+        Us = torch.fft.ifft2(self.fkernels * fXk, dim=(0, 1)).real
+        Gs = self.growth(Us, self.m, self.s) * self.h
+        if self.c1 != None:
+            Hs = torch.dstack([Gs[:, :, self.c1[c]].sum(dim=-1) for c in range(self.C)])
+        else:
+            Hs = torch.dstack([sum(k["h"] * Gs[:, :, i] if k["c1"] == c1 else torch.zeros_like(Gs[:, :, i], device=self.device) for i, k in zip(range(Gs.shape[-1]), self.kernels)) for c1 in range(self.C)])
+
+        # --- Mass Conservation Implementation ---
+        x_prev = x.clone()
+        x = x + self.dt * Hs
+        #x = torch.clip(x,0,1)
+        x = self.mass_conservation_step(x_prev, Hs)
+
+        """if self.mode == "soft":
+            x = self.soft_clip(x)  # clip is within mass_cons_step
+        if self.mode == "hard":
+            x = torch.clip(x, 0, 1)  # clip is within mass_cons_step"""
+
+        return x
+    def construct_kernels(self, K, device):
+        if self.pk == "sparse":
+            Ds = [torch.tensor(
+                np.linalg.norm(np.mgrid[-self.midX:self.midX, -self.midY:self.midY], axis=0) / K*len(k["b"])/k["r"],
+                device=self.device, dtype=torch.float32) for k in self.kernels]
+        else:
+            Ds = [torch.tensor(
+                np.linalg.norm(np.mgrid[-self.midX:self.midX, -self.midY:self.midY], axis=0) / ((K+15)*k["r"]),
+                device=self.device, dtype=torch.float32) for k in self.kernels]
+
+        Ks = torch.dstack([self.sigmoid(-(D - 1) * 10) * self.bell_kernel(D, torch.tensor(k["a"], device=device),
+                                                                              torch.tensor(k["w"], device=device),
+                                                                              torch.tensor(k["b"], device=device)) for
+                               D, k in zip(Ds, self.kernels)])
+        fkernels = torch.fft.fft2(torch.fft.fftshift(Ks / Ks.sum(dim=(0, 1), keepdims=True), dim=(0, 1)),
+                                       dim=(0, 1))
+        return fkernels
+
+    def mass_conservation_step(self, x_previous, Hs):
+        """
+        Implements the mass diffusion with A/R scores as per the provided equations,
+        using Hs as A/R scores.
+
+        Args:
+            x_previous: the mass from the *previous* time step.
+            Hs: The A/R scores
+        """
+        H, W, C = x_previous.shape
+
+        # Create neighbor indices (including self)
+        offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1), (1, -1), (1, 0), (1, 1)]
+        rows = torch.arange(0, H, device=self.device).view(-1, 1)  # Column vector
+        cols = torch.arange(0, W, device=self.device).view(1, -1)  # Row vector
+
+        # Collect Hs and mass from the *previous* step for each neighbor
+        neighbors_Hs = []
+        neighbors_masses = []
+        for row_offset, col_offset in offsets:
+            neighbor_rows = torch.remainder(rows + row_offset, H)
+            neighbor_cols = torch.remainder(cols + col_offset, W)
+            neighbors_Hs.append(Hs[neighbor_rows, neighbor_cols, :])  # (H,W,C)
+            neighbors_masses.append(x_previous[neighbor_rows, neighbor_cols, :])  # (H,W,C)
+
+        neighborhood_Hs = torch.stack(neighbors_Hs, dim=0)  # (9,H,W,C)
+        neighborhood_masses = torch.stack(neighbors_masses, dim=0)  # (9,H,W,C)
+
+        # 1. Apply Softmax to the A/R scores
+        normalized_ar_scores = torch.softmax(neighborhood_Hs.reshape(9, -1), dim=0).reshape_as(
+            neighborhood_Hs)  # (9, H, W, C)
+
+        # 2. Calculate redistribution: Each score multiplied by the *neighbor's previous* mass
+        redistributions = normalized_ar_scores * neighborhood_masses
+
+        # 3. Calculate the new mass: Sum the redistributions
+        new_mass = redistributions.sum(dim=0)  # (H,W,C)
+
+        return new_mass
