@@ -481,7 +481,7 @@ class Lenia_Diff_MassConserve(torch.nn.Module):
         neighborhood_E  = torch.stack(neighbors_E, dim=0) #(9,H,W,C)
 
 
-        # Calculate redistribution
+        # Calculate redistribution  = e^S/N(E)*N(Mass)
         redistributions = (torch.exp(Hs)/neighborhood_E)*neighborhood_masses
 
         # 3. Calculate the new mass: Sum the redistributions
