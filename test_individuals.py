@@ -21,9 +21,9 @@ full_screen_sim_x, full_screen_sim_y = int(150), int(150)  # <-dims, the bigger 
 config_type = None # <-- None for random, file name for a parameter set saved on file
 has_food = False  # <-- only works on flow lenia, set to true for food
 s_uuid = str(uuid.uuid4())
-is_flow = False# <-- set to true if using flow lenia, allows for some extra parameters
+is_flow = True# <-- set to true if using flow lenia, allows for some extra parameters
 config = configs.load_saved_file(config_type)  # <-- config.load_saved_files for loading from a file, config.Name for loading know lenia creatrures, check configs for names
-ca_type = Lenia_Classic
+ca_type = Lenia_Diff_MassConserve
 # <-- Lenia_Flow for flow lenia, Lenia_classic for classic lenia, Lenia_Diff for differentiable Lenia
 save_path = "./base/"  # <-- change for prefered path to save parameters
 shape_path = "shapes/"

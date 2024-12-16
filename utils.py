@@ -14,7 +14,7 @@ SPACE_CLASSIC= {
                 "b"  :{"high": 1., "low":-1.0},
                 "m"  :{"high": .7, "low":0},
                 "s"  :{"high": .2, "low":0},
-                "h"  :{"high": 1., "low":-1},
+                "h"  :{"high": 1., "low":0.01},
                 "r"  :{"high": 1., "low":0.01},
                 "w"  :{"high": 1, "low":0.01},
                 "a"  :{"high": 1., "low":0.01}

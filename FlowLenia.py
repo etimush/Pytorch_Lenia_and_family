@@ -426,15 +426,10 @@ class Lenia_Diff_MassConserve(torch.nn.Module):
             Hs = torch.dstack([sum(k["h"] * Gs[:, :, i] if k["c1"] == c1 else torch.zeros_like(Gs[:, :, i], device=self.device) for i, k in zip(range(Gs.shape[-1]), self.kernels)) for c1 in range(self.C)])
 
         # --- Mass Conservation Implementation ---
-        x_prev = x.clone()
-        x = x + self.dt * Hs
-        #x = torch.clip(x,0,1)
-        x = self.mass_conservation_step(x_prev, Hs)
 
-        """if self.mode == "soft":
-            x = self.soft_clip(x)  # clip is within mass_cons_step
-        if self.mode == "hard":
-            x = torch.clip(x, 0, 1)  # clip is within mass_cons_step"""
+
+        x = self.mass_conservation_step(x, Hs)
+
 
         return x
     def construct_kernels(self, K, device):
@@ -456,14 +451,6 @@ class Lenia_Diff_MassConserve(torch.nn.Module):
         return fkernels
 
     def mass_conservation_step(self, x_previous, Hs):
-        """
-        Implements the mass diffusion with A/R scores as per the provided equations,
-        using Hs as A/R scores.
-
-        Args:
-            x_previous: the mass from the *previous* time step.
-            Hs: The A/R scores
-        """
         H, W, C = x_previous.shape
 
         # Create neighbor indices (including self)
@@ -483,12 +470,19 @@ class Lenia_Diff_MassConserve(torch.nn.Module):
         neighborhood_Hs = torch.stack(neighbors_Hs, dim=0)  # (9,H,W,C)
         neighborhood_masses = torch.stack(neighbors_masses, dim=0)  # (9,H,W,C)
 
-        # 1. Apply Softmax to the A/R scores
-        normalized_ar_scores = torch.softmax(neighborhood_Hs.reshape(9, -1), dim=0).reshape_as(
-            neighborhood_Hs)  # (9, H, W, C)
+        #Compuet E^t_x,y
+        E = torch.exp(neighborhood_Hs).sum(dim = 0)
+        neighbors_E = []
+        for row_offset, col_offset in offsets:
+            neighbor_rows = torch.remainder(rows + row_offset, H)
+            neighbor_cols = torch.remainder(cols + col_offset, W)
+            neighbors_E.append(E[neighbor_rows, neighbor_cols, :])  # (H,W,C)
 
-        # 2. Calculate redistribution: Each score multiplied by the *neighbor's previous* mass
-        redistributions = normalized_ar_scores * neighborhood_masses
+        neighborhood_E  = torch.stack(neighbors_E, dim=0) #(9,H,W,C)
+
+
+        # Calculate redistribution
+        redistributions = (torch.exp(Hs)/neighborhood_E)*neighborhood_masses
 
         # 3. Calculate the new mass: Sum the redistributions
         new_mass = redistributions.sum(dim=0)  # (H,W,C)
