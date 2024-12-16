@@ -421,14 +421,20 @@ class Lenia_Diff_MassConserve(torch.nn.Module):
         Us = torch.fft.ifft2(self.fkernels * fXk, dim=(0, 1)).real
         Gs = self.growth(Us, self.m, self.s) * self.h
         if self.c1 != None:
-            Hs = torch.dstack([Gs[:, :, self.c1[c]].sum(dim=-1) for c in range(self.C)])
+            Hs = torch.dstack([Gs[:, :, self.c1[c]].sum(dim=-1) for c in range(self.C - self.has_food)])
         else:
             Hs = torch.dstack([sum(k["h"] * Gs[:, :, i] if k["c1"] == c1 else torch.zeros_like(Gs[:, :, i], device=self.device) for i, k in zip(range(Gs.shape[-1]), self.kernels)) for c1 in range(self.C)])
 
         # --- Mass Conservation Implementation ---
 
+        if self.has_food:
+            x_overlap = ((x[:,:,-1][...,None]-0.1 )* .9).clip(torch.zeros_like(x[:,:,0:1]), x[:,:,0:1])
+            food= x[:,:,0:1] - x_overlap
+            x = self.mass_conservation_step(x[:,:,self.has_food:], Hs)+ torch.cat([x_overlap/self.C for _ in range(self.C-1)], dim=-1) - (x[:,:,self.has_food:]*.0005)/(self.C-1)
+            x = torch.cat((food, x), dim= -1)
+        else :
 
-        x = self.mass_conservation_step(x, Hs)
+            x = self.mass_conservation_step(x, Hs)
 
 
         return x

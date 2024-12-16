@@ -120,7 +120,7 @@ def get_setting(setting_config, has_food, has_food_range = [1,2,3,4], no_food_ra
         n = random.randint(min(n_range),max(n_range))
         pk = random.choice(pk_choice)
         return C, dt, k, n, pk, has_food
-def get_starting_pattern(pattern_confing, starting_area, C, X, Y,has_food,num_food =1500,food_size = 2 ,device= "cuda:0",  full =True, wavelength = 10):
+def get_starting_pattern(pattern_confing, starting_area, C, X, Y,has_food,num_food =500,food_size = 2 ,device= "cuda:0",  full =True, wavelength = 10):
     if pattern_confing != None and pattern_confing["pattern"] != None:
         x = torch.zeros(( X, Y, C), dtype=torch.float32, device=device)
 
@@ -318,7 +318,7 @@ def construct_ca(s_uuid, save_path,full_screen_sim_x, full_screen_sim_y, mode, d
         device).eval()
     nca = adjust_params(nca, c0, c1, pk)
     x = get_starting_pattern(random_config, starting_area, C - has_food if has_food is not None else C, full_screen_sim_x,
-                             full_screen_sim_y, has_food, num_food=1500, full=full_noise, wavelength=k)
+                             full_screen_sim_y, has_food, num_food=500, full=full_noise, wavelength=k)
     saver = Saver(kernels, dt, C - has_food if has_food is not None else C, k, s_uuid, is_flow, c0, c1, pk, has_food,
                   nca.__class__.__name__, save_path)
     return nca, x, saver

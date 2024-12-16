@@ -38,12 +38,12 @@ saved_shaped = None
     These variables give the range to or choice for the parameter constructor to select from
     If a range is not wanted set these to a single value """
 
-has_food_range = [1, 2, 3, 4]  # <-- number of possible channels channels if food is available
-no_food_range = [1,3]  # <-- number of possible channels if no food is available
+has_food_range = [3]  # <-- number of possible channels channels if food is available
+no_food_range = [1]  # <-- number of possible channels if no food is available
 dt_range = [5]  # <-- posible range of for integration factor dt = 1/choice(dt_range)
 kernel_range = [25,31]  # <-- range for kernel size
-n_range = [9]  # <-- range for number of kenels
-pk_choice = ["Dense"]  # <- choice for wether sparse or dense kernels
+n_range = [3,15]  # <-- range for number of kenels
+pk_choice = ["Sparse","Dense"]  # <- choice for wether sparse or dense kernels
 
 ############
 
